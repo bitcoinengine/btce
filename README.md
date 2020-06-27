@@ -1,129 +1,246 @@
-有研究微服务网关权限的，在网关zuul中对所有下游服务权限做控制，覆盖到所有接口，权限控制到角色、菜单、按钮、方法。基于zuul纯内存的方式，校验时性能无损耗。参考我另一个项目 https://gitee.com/tianyalei/zuulauth
-
-有对多线程并行调度感兴趣的，参考另一个项目 https://gitee.com/jd-platform-opensource/asyncTool  该并发框架支持任意的多线程并行、串行、阻塞、依赖、回调，可以任意组合各线程的执行顺序，还带全链路回调。该项目在京东app后台正在试用，有海量用户、高并发等各种复杂极端场景。是作为Java程序员学习多线程的不可多得的好项目。
-
-# md_blockchain
-Java区块链平台，基于Springboot开发的区块链平台。区块链qq交流群737858576，一起学习区块链平台开发，当然也交流Springboot、springcloud、机器学习等知识。
-### 起因
-
-公司要开发区块链，原本是想着使用以太坊开发个合约或者是使用个第三方平台来做，后来发现都不符合业务需求。原因很简单，以太坊、超级账本等平台都是做共享账本的，有代币和挖矿等模块。而我们需要的就是数家公司组个联盟，来共同见证、记录一些不可篡改的交互信息，如A公司给B公司发了一个xxx请求，B公司响应了什么什么。其实要的就是一个分布式数据库，而且性能要好，不能像比特币那种10分钟才生成一个区块。我们要的更多的是数据库的性能，和区块链的一些特性。
-
-### 经过
-
-项目于18年3月初开始研发，历时一月发布了第一版。主要做了存储模块、加密模块、网络通信、PBFT共识算法、公钥私钥、区块内容解析落地入库等。已经初步具备了区块链的基本特征，但在merkle tree、智能合约以及其他的一些细节上，尚不到位。
-
-希望高手不吝赐教，集思广益，提出见解或方案，来做一个区块链平台项目，适合更多的区块链场景，而不仅仅是账本和各种忽悠人的代币。
-
-理想中的区块链平台：
-
-![输入图片说明](https://gitee.com/uploads/images/2018/0419/170921_7808ffdc_303698.png "1.png")
-
-### 项目说明
-主要有存储模块、网络模块、PBFT共识算法、加密模块、区块解析入库等。
-
-该项目属于"链"，非"币"。不涉及虚拟币和挖矿。
-
-### 存储模块
-Block内存储的是类Sql语句。联盟间预先设定好符合业务场景需要的数据库表结构，然后设定好各个节点对表的操作权限（ADD，UPDATE，DELETE），将来各个节点就可以按照自己被允许的权限，进行Sql语句的编写，并打包至Block中，再全网广播，等待全网校验签名、权限等信息的合法性。如果Block合法，则进入PBFT共识算法机制，各节点开始按照PrePrepare、Prepare、Commit等状态依次执行，直到2f+1个commit后，开始进行本地生成新区块。新区块生成后，各节点进行区块内容解析，并落地入库的操作。
-
-场景就比较广泛了，可以设定不同的表结构，或者多个表，进而能完成各自类型信息的存储。譬如商品溯源，从生产商、运输、经销商、消费者等，每个环节都可以对某个商品进行ADD信息的操作。
-
-存储采用的是key-value数据库rocksDB，了解比特币的知道，比特币用的是levelDB，都是类似的东西。可以通过修改yml中db.levelDB为true，db.RocksDB为false来动态切换使用哪个数据库。
-
-结构类似于sql的语句，如ADD（增删改） tableName（表名）ID（主键） JSON（该记录的json）。这里设置了回滚的逻辑，也就是当你做了一个ADD操作时，会同时存储一条Delete语句，以用于将来可能的回滚操作。
+If you have the authority to study the microservice gateway, you can control all downstream service authorities in the gateway zuul, covering all interfaces, and controlling the authority to roles, menus, buttons and methods. Based on zuul pure memory mode, the performance is lossless during verification. Refer to my other project https://gitee.com/tianyalei/zuulauth
 
 
 
-### 网络模块
-网络层，采用的是各节点互相长连接、断线重连，然后维持心跳包。网络框架使用的是t-io，也是oschina的知名开源项目。t-io采用了AIO的方式，在大量长连接情况下性能优异，资源占用也很少，并且具备group功能，特别适合于做多个联盟链的SaaS平台。并且包含了心跳包、断线重连、retry等优秀功能。
-
-在项目中，每个节点即是server，又是client，作为server则被其他的N-1个节点连接，作为client则去连接其他N-1个节点的server。同一个联盟，设定一个Group，每次发消息，直接调用sendGroup方法即可。
-
-但仍需要注意的是，由于项目采用了pbft共识算法，在达到共识的过程中，会产生N的3次方数量的网络通信，当节点数量较多，如已达到100时，每次共识将会给网络带来沉重的负担。这是算法本身的限制。
-
-### 共识模块PBFT
-
-分布式共识算法是分布式系统的核心，常见的有Paxos、pbft、bft、raft、pow等。区块链中常见的是POW、POS、DPOS、pbft等。
-
-比特币采用了POW工作量证明，需要耗费大量的资源进行hash运算（挖矿），由矿工来完成生成Block的权利。其他多是采用选举投票的方式来决定谁来生成Block。共同的特点就是只能特定的节点来生成区块，然后广播给其他人。
-
-区块链分如下三类：
-
-私有链：这是指在企业内部部署的区块链应用，所有节点都是可以信任的，不存在恶意节点；
-
-联盟链：半封闭生态的交易网络，存在不对等信任的节点，可能存在恶意节点；
-
-公有链：开放生态的交易网络，为联盟链和私有链等提供全球交易网络。
-
-由于私有链是封闭生态的存储系统，因此采用Paxos类共识算法（过半同意）可以达到最优的性能；联盟链有半公开半开放特性，因此拜占庭容错是适合选择之一，例如IBM超级账本项目；对于公有链来说，这种共识算法的要求已经超出了普通分布式系统构建的范畴，再加上交易的特性，因此需要引入更多的安全考虑。所以比特币的POW是个非常好的选择。
-
-我们这里可选的是raft和pbft，分别做私链和联盟链，项目中我使用了修改过的pbft共识算法。
-
-先来简单了解pbft：
-
-（1）从全网节点选举出一个主节点（Leader），新区块由主节点负责生成。
-
-（2）每个节点把客户端发来的交易向全网广播，主节点将从网络收集到需放在新区块内的多个交易排序后存入列表，并将该列表向全网广播。
-
-（3）每个节点接收到交易列表后，根据排序模拟执行这些交易。所有交易执行完后，基于交易结果计算新区块的哈希摘要，并向全网广播。
-
-（4）如果一个节点收到的2f（f为可容忍的拜占庭节点数）个其它节点发来的摘要都和自己相等，就向全网广播一条commit消息。
-
-（5）如果一个节点收到2f+1条（包括自己）commit消息，即可提交新区块到本地的区块链和状态数据库。
-
-（6）客户端收到f + 1个成功（即便有f个失败、再f个恶意返回的错误信息，f + 1个正确的也是多数派）的返回，即可认为该次写入请求是成功的。
-
-可以看到，传统的pbft是需要先选举出leader的，然后由leader来搜集交易，并打包，然后广播出去。然后各个节点开始对新Block进行校验、投票、累积commit数量，最后落地。
-
-而我这里对pbft做了修改，这是一个联盟，各个节点是平等的，而且性能要高。所以我不想让每个节点都生成一个指令后，发给其他节点，再大家选举出一个节点来搜集网络上的指令组合再生成Block，太复杂了，而且又存在了leader节点的故障隐患。
-
-我对pbft的修改是，不需要选择leader，任何节点都可以构建Block，然后全网广播。其他节点收到该Block请求时即进入Pre-Prepare状态，校验格式、hash、签名、和table的权限，校验通过后，进入Prepare状态，并全网广播状态。待自己累积的各节点Prepare的数量大于2f+1时，进入commit状态，并全网广播该状态。待自己累积的各节点Commit的数量大于2f+1时，认为已达成共识，将Block加入区块链中，然后执行Block中sql语句。
-
-很明显，和有leader时相比，缺少了顺序的概念。有leader时能保证Block的顺序，当有并发生成Block的需求时，leader能按照顺序进行广播。譬如大家都已经到number=5的区块了，然后需要再生成2个，有leader时，则会按照6、7的顺序来生成。而没有leader时，则可能发生多节点同时生成6的情况。为了避免分叉，我做了一些处理，具体的可以在代码里看实现逻辑。
-
-### 区块信息查询
-
-各节点通过执行相同的sql来实现一个同步的sqlite数据库（或mysql等其他关系型数据库），将来对数据的查询都是直接查询sqlite，性能高于传统的区块链项目。
-
-由于各个节点都能生成Block，在高并发下会出现区块不一致的情况。如果因为某些原因导致链分叉了，也提供了回滚机制，sql可以回滚。原理也很简单，你ADD一个数据时，我会在区块里同时记录两个指令，一个是ADD，一个是回滚用的DELETE。同理，UPDATE时也会保存原来的旧数据。区块里的sql落地，譬如顺序执行1-10个指令，回滚时就是从10-1执行回滚指令。
-
-每个节点都会记录自己已经同步了的区块的值，以便随时进行sql落地入库。
-
-对区块链信息的查询，那就简单了，直接做数据库查询即可。相比于比特币需要检索整个区块链的索引树，速度和方便性就大不同了。
-
-### 简单使用说明
-
-使用方法：先下载[md_blockchain_manager项目](https://gitee.com/tianyalei/md_blockchain_manager)，然后导入工程里的sql数据库文件，修改application.yml数据库配置，最后启动manager项目。
-
-然后修改md_blockchain中application.yml里的name、appid和manager项目数据库里的某个值对应，作为一个节点。如果有多个节点，则某个节点都和数据库里对应，填写各节点的ip。managerUrl就是manager项目的url，让该项目能访问到manager项目。
-
-在md_blockchian项目启动时，在ClientStarter类中可见，启动时会从manager项目拉取所有节点的数据，并进行连接。如果自己的ip和appId等不在manager数据库中，则无法启动。
-
-可以通过访问localhost:8080/block?content=1来生成一个区块。正常使用时至少要启动4个节点才行，否则无法达成共识，PBFT要求2f+1个节点同意才能生成Block。为了方便测试，可以直接修改pbftSize的返回值为0，这样就能自己一个节点玩起来了。如果有多个节点，在生成Block后就会发现别的节点也会自动同步自己新生成的Block。目前代码里默认设置了一张表message，里面也只有一个字段content，相当于一个简单的区块链记事本。当有4个节点时，可以通过并发访问其中的几个来同时生成Block进行测试，看是否会分叉。还可以关停其中的一个，看其他的三个是否能达成共识（拜占庭最多容许f个节点故障，4个节点允许1个故障），恢复故障的那个，看是否能够同步其他正常节点的Block。可以进行各种测试，欢迎提bug。
-
-可以通过localhost:8080/block/sqlite来查看sqlite里存的数据，就是根据Block里的sql语句执行后的结果。
-
-我把项目部署到docker里了，共启动4个节点，如图：
-![输入图片说明](https://gitee.com/uploads/images/2018/0404/105151_c8931604_303698.png "1.png")
-
-manager就是md_blockchain_manager项目，主要功能就是提供联盟链内各节点ip和各节点的权限信息
-![输入图片说明](https://gitee.com/uploads/images/2018/0426/185644_23b10899_303698.png "2.png")
-
-四个节点ip都写死了，都启动后，它们会相互全部连接起来，并维持住长连接和心跳包，相互交换最新的Block信息。
-![输入图片说明](https://gitee.com/uploads/images/2018/0426/190528_3f93792e_303698.png "2.png")
+If you are interested in multithreading, please refer to another project https://gitee.com/jd-platform-opensource/asyncTool The concurrency framework supports any multithread parallel, serial, blocking, dependency and callback, and can combine the execution order of each thread arbitrarily, with full link callback. The project is on trial in the background of JD app, with a variety of complex extreme scenarios such as massive users and high concurrency. It's a rare good project for Java programmers to learn multithreading.
 
 
-我调用一下block项目的生成区块接口，http://ip:port/block?content=1，可以看到各节点投票及pbft的各状态
-![输入图片说明](https://gitee.com/uploads/images/2018/0426/185819_06f95c59_303698.png "2.png")
 
-别的节点会是这样，收到block项目请求生成区块的请求、并开始校验，然后进入pbft的投票状态
-![输入图片说明](https://gitee.com/uploads/images/2018/0426/190006_0bb1f8d4_303698.png "2.png")
+# md_ blockchain
 
-如果某节点断线了、或者是新加入的节点，从别的正常节点拉取新区块
-![输入图片说明](https://gitee.com/uploads/images/2018/0426/190201_bdfd8d19_303698.png "2.png")
+Java blockchain platform, a blockchain platform developed based on springboot. The QQ communication group of the blockchain 737858576, learning the development of the blockchain platform together, and of course, exchanging knowledge of springboot, springcloud, machine learning, etc.
 
-此外还有高并发情况下，各节点同时生成Block，系统处理共识、保证区块链不分叉的一些测试。
+###Cause
 
-这个生成区块的接口是写好用来测试的，正常走的流程是调用instuction接口，先生产符合自己需求的指令，然后组合多个指令，调用BlockController里的生成区块接口。
 
+
+In order to develop blockchain, the company originally intended to develop a contract or a third-party platform using Ethereum, but later found that none of them met the business requirements. The reason is very simple. Ethereum, super ledger and other platforms are all for sharing ledgers, including token and mining modules. What we need is for several companies to form alliances to witness and record some non tamperable interactive information, such as what company a sent company B an XXX request and what company B responded to. In fact, it's a distributed database with good performance. It can't generate a block in 10 minutes like bitcoin. What we want more is the performance of database and some features of blockchain.
+
+
+
+###Through
+
+
+
+The research and development of the project started at the beginning of March 18, and the first version was released in January. It mainly includes storage module, encryption module, network communication, pbft consensus algorithm, public key and private key, block content analysis landing and warehousing, etc. It has initially possessed the basic characteristics of blockchain, but it is not in place in terms of Merkle tree, smart contract and other details.
+
+
+
+It is hoped that the experts will not hesitate to give advice, brainstorm and put forward opinions or schemes to make a blockchain platform project, which is suitable for more blockchain scenarios, rather than just account books and tokens of various fraudsters.
+
+
+
+Ideal blockchain platform:
+
+
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0419/170921_ 7808ffdc_ 303698.png "1.png")
+
+
+
+###Project description
+
+It mainly includes storage module, network module, pbft consensus algorithm, encryption module, block parsing and warehousing, etc.
+
+
+
+This item belongs to "chain", not "currency". Virtual currency and mining are not involved.
+
+
+
+###Enclosure
+
+SQL like statements are stored in the block. In the future, each node can write SQL statement according to its permission, package it into block, broadcast it to the whole network, and wait for the validity of signature, permission and other information of the whole network. If the block is legal, enter the pbft consensus algorithm mechanism. Each node starts to execute in sequence according to the state of prepare, prepare, commit, etc. until 2F + 1 commit, start to generate new blocks locally. After the new area block is generated, each node performs block content analysis and lands in the warehouse.
+
+
+
+The scenarios are more extensive. You can set different table structures, or multiple tables, and then complete the storage of their own types of information. For example, commodity traceability, from the manufacturer, transportation, dealers, consumers, etc., each link can operate the add information of a commodity.
+
+
+
+The key value database rocksdb is used for storage. To understand bitcoin, leveldb is used for bitcoin, which is similar. You can modify the db.levelDB True, db.RocksDB Use false to dynamically switch which database to use.
+
+
+
+The structure is similar to SQL statements, such as add (add, delete, change) tablename (table name) ID (primary key) JSON (the JSON of the record). The logic of rollback is set here, that is, when you do an add operation, a delete statement will be stored at the same time for possible rollback operations in the future.
+
+
+
+###Network module
+
+In the network layer, each node is connected with each other for a long time, disconnected and reconnected, and then the heartbeat packet is maintained. The network framework uses t-io, which is also a well-known open source project of oschina. T-io adopts the way of AIO, which has excellent performance in a large number of long connections, little resource occupation, and group function, especially suitable for SaaS platform with multiple alliance chains. It also includes excellent functions such as heartbeat package, disconnection and reconnection, Retry, etc.
+
+
+
+In a project, each node is both a server and a client. As a server, it is connected by other N-1 nodes. As a client, it is connected to the server of other N-1 nodes. For the same alliance, set a group. Each time you send a message, directly call the sendgroup method.
+
+
+
+However, it still needs to be noted that due to the pbft consensus algorithm adopted in the project, in the process of reaching consensus, there will be three times of N-power network communication. When the number of nodes is large, such as reaching 100, each consensus will bring a heavy burden to the network. This is the limitation of the algorithm itself.
+
+
+
+###Consensus module pbft
+
+
+
+Distributed consensus algorithm is the core of distributed system, and Paxos, pbft, BFT, raft, POW and so on are common. Pow, POS, dpos, pbft and so on are common in blockchain.
+
+
+
+Bitcoin uses POW workload to prove that it needs a lot of resources to perform hash operation (mining), and the miner completes the right to generate block. The other way is to vote by election to decide who will generate the block. The common feature is that only specific nodes can generate blocks and broadcast them to others.
+
+
+
+There are three types of blockchains:
+
+
+
+Private chain: This refers to the blockchain application deployed in the enterprise. All nodes can be trusted and there is no malicious node;
+
+
+
+Alliance chain: semi closed ecological transaction network, with unequal trust nodes, possibly malicious nodes;
+
+
+
+Public chain: open ecological trading network, providing global trading network for alliance chain and private chain.
+
+
+
+As the private chain is a closed ecological storage system, the Paxos class consensus algorithm (more than half agreed) can achieve the optimal performance; the alliance chain has a semi open and semi open feature, so Byzantine fault tolerance is one of the suitable choices, such as IBM super ledger project; for the public chain, the requirements of this consensus algorithm have gone beyond the scope of common distributed system construction, In addition to the characteristics of transactions, more security considerations need to be introduced. So the pow of bitcoin is a very good choice.
+
+
+
+We can choose raft and pbft here to do private chain and alliance chain respectively. In the project, I used the modified pbft consensus algorithm.
+
+
+
+Let's start with a brief introduction to pbft:
+
+
+
+(1) A leader is selected from the whole network node, and the new block is generated by the master node.
+
+
+
+(2) Each node broadcasts the transactions sent from the client to the whole network. The main node will collect multiple transactions that need to be placed in the new block from the network and store them in the list, and broadcast the list to the whole network.
+
+
+
+(3) After receiving the transaction list, each node performs these transactions according to the sorting simulation. After all transactions are executed, the hash summary of the new block is calculated based on the transaction results and broadcast to the whole network.
+
+
+
+(4) If a node receives 2F (F is the number of tolerated Byzantine nodes) summaries from other nodes equal to itself, a commit message is broadcast to the whole network.
+
+
+
+(5) If a node receives 2F + 1 (including its own) commit messages, it can submit the new block to the local blockchain and state database.
+
+
+
+(6) When the client receives the return of F + 1 success (even if there are f failures and f malicious return error messages, F + 1 correct is also the majority), it can be considered that the write request is successful.
+
+
+
+As you can see, the traditional pbft needs to select a leader first, then the leader will collect the transactions, package them, and broadcast them. Then each node begins to verify, vote, accumulate commit quantity for the new block, and finally lands.
+
+
+
+And I've modified pbft here. It's an alliance. All nodes are equal, and the performance is high. So I don't want each node to generate an instruction and send it to other nodes. Then you can select a node to collect the instruction combination on the network and generate a block. It's too complex, and there is a hidden trouble of the leader node.
+
+
+
+My modification to pbft is that no leader needs to be selected, any node can build a block, and then broadcast the whole network. When other nodes receive the block request, they will enter the pre prepare state to verify the format, hash, signature, and table permissions. After passing the verification, they will enter the prepare state and broadcast the whole network. When the number of prepared nodes accumulated by itself is greater than 2F + 1, it will enter the commit state and broadcast the state throughout the network. When the number of commit of each node accumulated by itself is greater than 2F + 1, it is considered that a consensus has been reached, block is added to the blockchain, and then SQL statement in block is executed.
+
+
+
+Obviously, there is a lack of the concept of order compared with the leader. When there is a leader, it can ensure the order of blocks. When there is a need for concurrent block generation, the leader can broadcast in order. For example, we have reached the block number = 5, and then we need to regenerate it into 2. If there is a leader, it will be generated in the order of 6 and 7. Without a leader, multiple nodes may generate 6 at the same time. In order to avoid forking, I have done some processing, specifically can see the implementation logic in the code.
+###Block information query
+
+
+
+Each node implements a synchronous SQLite database (or MySQL and other relational databases) by executing the same SQL. In the future, the query of data is direct query of SQLite, and the performance is higher than that of traditional blockchain projects.
+
+
+
+Because each node can generate blocks, block inconsistency will occur under high concurrency. If the chain is forked for some reasons, a rollback mechanism is also provided, and SQL can be rolled back. The principle is also very simple. When you add a data, I will record two instructions in the block at the same time, one is add, the other is delete for rollback. In the same way, the original old data will be saved when updating. The SQL in the block lands, such as executing 1-10 instructions in sequence. When rolling back, it means executing the rolling back instructions from 10-1.
+
+
+
+Each node will record the value of the synchronized block, so that the SQL landing and warehousing can be carried out at any time.
+
+
+
+For the query of blockchain information, it's simple, just do the database query directly. Compared with bitcoin, which needs to retrieve the index tree of the whole blockchain, the speed and convenience are greatly different.
+
+
+
+###Simple instructions
+
+
+
+Usage: Download [MD] first_ blockchain_ Manager Project]（ https://gitee.com/tianyalei/md_ blockchain_ Manager), then import the SQL database file in the project and modify it application.yml Database configuration, and finally start the manager project.
+
+
+
+Then modify MD_ In blockchain application.yml The name and appid in the manager project database correspond to a certain value as a node. If there are multiple nodes, a certain node corresponds to the database and fills in the IP address of each node. The manager URL is the URL of the manager project so that the project can access the manager project.
+
+
+
+In MD_ When the blockchain project is started, it can be seen in the clientstarter class. When it is started, the data of all nodes will be pulled from the manager project and connected. If your IP and appid are not in the manager database, you cannot start it.
+
+
+
+Access to localhost:8080/block?content=1 To generate a block. In normal use, at least 4 nodes must be started, otherwise consensus cannot be reached. Pbft requires 2F + 1 nodes to agree to generate a block. For the convenience of testing, you can directly change the return value of pbftsize to 0, so that you can play with one of your own nodes. If there are multiple nodes, after the block is generated, it will be found that other nodes will automatically synchronize their newly generated blocks. At present, a table message is set by default in the code, and there is only one field content in it, which is equivalent to a simple blockchain Notepad. When there are four nodes, you can access several of them simultaneously to generate blocks for testing to see if they will diverge. You can also shut down one of them to see if the other three can reach a consensus (Byzantium allows f node failures at most, 4 nodes allow 1 failure), recover the failed one, and see if you can synchronize the blocks of other normal nodes. All kinds of tests can be carried out, and bugs are welcome.
+
+
+
+Through localhost:8080/block/sqlite To view the data stored in SQLite is the result of executing the SQL statement in the block.
+
+
+
+I deployed the project to docker and started 4 nodes in total, as shown in the figure:
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0404/105151_ c8931604_ 303698.png "1.png")
+
+
+
+Manager is MD_ blockchain_ The main function of the manager project is to provide the IP and permission information of each node in the alliance chain
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0426/185644_ 23b10899_ 303698.png "2.png")
+
+
+
+The IP addresses of all four nodes are dead. When they are started, they will all connect with each other, maintain the long connection and heartbeat packets, and exchange the latest block information with each other.
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0426/190528_ 3f93792e_ 303698.png "2.png")
+
+
+
+
+I'll call the build block interface of the block project, http://ip : port / block? Content = 1, you can see the voting status of each node and the status of pbft
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0426/185819_ 06f95c59_ 303698.png "2.png")
+
+
+
+Other nodes will receive the block project request to generate the block, start verification, and enter the voting state of pbft
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0426/190006_ 0bb1f8d4_ 303698.png "2.png")
+
+
+
+If a node is disconnected or a newly added node, pull the new block from another normal node
+
+! [enter picture description]（ https://gitee.com/uploads/images/2018/0426/190201_ bdfd8d19_ 303698.png "2.png")
+
+
+
+In addition, in the case of high concurrency, each node generates blocks at the same time, and the system processes some tests to ensure that the blockchain does not split.
+
+
+
+The interface of the generated block is written for testing. The normal process is to call the instruction interface. You can generate instructions that meet your needs, and then combine multiple instructions to call the generated block interface in the blockcontroller.
 
